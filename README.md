@@ -1,8 +1,8 @@
 <h1 align="center">
   <br>
-  <img src="https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/neon.png" width="100%">
+  <img src="https://i.pinimg.com/736x/01/08/5a/01085a60231b0db905e22816aae35e53.jpg" width="100%">
   <br>
-  <b>SYSTEM ABSENSI - RND AL FAIZ</b>
+  <b>SYSTEM ABSENSI - AL FAIZ - BY RND TEAM😎</b>
   <br>
 </h1>
 
@@ -37,3 +37,10 @@ git clone [https://github.com/username/repository-name.git](https://github.com/u
 # Install dependencies
 composer install
 npm install && npm run build
+laravel/framework
+guzzlehttp/guzzle
+predis/predis
+ext-sockets
+ext-curl
+ext-pdo
+ext-pdo_mysql
