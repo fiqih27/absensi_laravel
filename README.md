@@ -2,9 +2,11 @@
   <br>
   <img src="bg.jpeg" width="100%">
   <br>
-   <b> بسم الله الرحمن الرحيم </b>
   <b>SYSTEM ABSENSI - AL FAIZ - BY RND TEAM😎</b>
   <br>
+   <br>
+   <b> بسم الله الرحمن الرحيم </b>
+    <br>
 </h1>
 
 <p align="center">
