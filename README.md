@@ -1,6 +1,6 @@
 <h1 align="center">
   <br>
-  <img src="https://i.pinimg.com/736x/01/08/5a/01085a60231b0db905e22816aae35e53.jpg" width="100%">
+  <img src="absensi_laravel\bg.jpeg" width="100%">
   <br>
   <b>SYSTEM ABSENSI - AL FAIZ - BY RND TEAM😎</b>
   <br>
