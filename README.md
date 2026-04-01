@@ -8,7 +8,6 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/FRAMEWORK-LARAVEL-red?style=for-the-badge&logo=laravel" />
-  <img src="https://img.shields.io/badge/STYLE-CYBERPUNK-blueviolet?style=for-the-badge&logo=ghost" />
   <img src="https://img.shields.io/badge/STATUS-ACTIVE-brightgreen?style=for-the-badge" />
 </p>
 
