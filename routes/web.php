@@ -40,6 +40,13 @@ Route::prefix('notifications')->name('notifications.')->group(function () {
     Route::delete('/delete-old', [NotificationController::class, 'deleteOld'])->name('delete-old');
     Route::get('/broadcast/create', [NotificationController::class, 'broadcast'])->name('broadcast');
     Route::post('/broadcast/send', [NotificationController::class, 'sendBroadcast'])->name('send-broadcast');
+   Route::get('/broadcast/history', [NotificationController::class, 'broadcastHistory'])->name('broadcast.history');
+    Route::get('/broadcast/{broadcastId}', [NotificationController::class, 'broadcastDetail'])->name('broadcast.detail');
+   Route::delete('/broadcast/delete-selected', [NotificationController::class, 'deleteSelectedBroadcasts'])->name('broadcast.delete-selected');
+    Route::delete('/broadcast/delete-all', [NotificationController::class, 'deleteAllBroadcasts'])->name('broadcast.delete-all');
+    Route::delete('/broadcast/{broadcastId}', [NotificationController::class, 'deleteBroadcast'])->name('broadcast.delete');
+    Route::get('/broadcast/{broadcastId}', [NotificationController::class, 'broadcastDetail'])->name('broadcast.detail');
+    Route::post('/broadcast/{broadcastId}/resend', [NotificationController::class, 'resendFailedBroadcast'])->name('broadcast.resend');
 });
 
 // Setting Routes

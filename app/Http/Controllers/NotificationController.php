@@ -2,9 +2,14 @@
 
 namespace App\Http\Controllers;
 
+use Illuminate\Http\Request;
+use App\Models\BroadcastHistory;
+use App\Models\ParentModel;
 use App\Models\Notification;
 use App\Services\WhatsAppService;
-use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 class NotificationController extends Controller
 {
@@ -112,40 +117,312 @@ class NotificationController extends Controller
         return view('notifications.broadcast');
     }
 
-    /**
-     * Proses broadcast notifikasi
-     */
-    public function sendBroadcast(Request $request, WhatsAppService $waService)
+
+public function sendBroadcast(Request $request, WhatsAppService $waService)
     {
         $request->validate([
             'message' => 'required|string',
             'recipients' => 'required|in:all,active_only',
         ]);
 
-        $parents = \App\Models\ParentModel::query();
+        DB::beginTransaction();
 
-        if ($request->recipients === 'active_only') {
-            $parents->whereHas('student', function($q) {
-                $q->where('status', 'active');
-            });
+        try {
+            // Generate unique broadcast ID
+            $broadcastId = 'BROADCAST_' . Str::upper(Str::random(8)) . '_' . time();
+
+            // Ambil daftar parents
+            $parentsQuery = ParentModel::query();
+
+            if ($request->recipients === 'active_only') {
+                $parentsQuery->whereHas('student', function($q) {
+                    $q->where('status', 'active');
+                });
+            }
+
+            $parents = $parentsQuery->get();
+
+            if ($parents->isEmpty()) {
+                return redirect()->route('notifications.broadcast.history')
+                    ->with('error', 'Tidak ada penerima yang ditemukan.');
+            }
+
+            // Prepare data untuk broadcast
+            $recipientsDetail = [];
+            $failedRecipients = [];
+            $sent = 0;
+            $failed = 0;
+
+            // Kirim pesan ke setiap parent
+            foreach ($parents as $parent) {
+                // Kirim pesan WhatsApp
+                $result = $waService->sendMessage($parent->phone, $request->message);
+
+                $recipientData = [
+                    'id' => $parent->id,
+                    'name' => $parent->name,
+                    'phone' => $parent->phone,
+                    'student_name' => $parent->student->name ?? 'N/A',
+                    'status' => $result['success'] ? 'sent' : 'failed',
+                    'sent_at' => now()->toDateTimeString(),
+                ];
+
+                if (!$result['success']) {
+                    $recipientData['error'] = $result['message'] ?? 'Unknown error';
+                    $failedRecipients[] = $recipientData;
+                    $failed++;
+                } else {
+                    $recipientData['message_id'] = $result['message_id'] ?? null;
+                    $recipientsDetail[] = $recipientData;
+                    $sent++;
+                }
+            }
+
+            // Simpan riwayat broadcast ke tabel broadcast_histories saja
+            $broadcastHistory = BroadcastHistory::create([
+                'broadcast_id' => $broadcastId,
+                'message' => $request->message,
+                'recipient_type' => $request->recipients,
+                'total_recipients' => $parents->count(),
+                'sent_count' => $sent,
+                'failed_count' => $failed,
+                'recipients_detail' => $recipientsDetail,
+                'failed_recipients' => $failedRecipients,
+                'status' => BroadcastHistory::STATUS_COMPLETED,
+                'started_at' => now(),
+                'completed_at' => now(),
+                'notes' => "Broadcast selesai: {$sent} berhasil, {$failed} gagal",
+            ]);
+
+            DB::commit();
+
+            $message = "Broadcast selesai: {$sent} berhasil, {$failed} gagal.";
+
+            return redirect()->route('notifications.broadcast.history')
+                ->with('success', $message)
+                ->with('broadcast_id', $broadcastId);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+
+            return redirect()->route('notifications.broadcast.history')
+                ->with('error', 'Gagal mengirim broadcast: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Menampilkan riwayat broadcast
+     */
+    public function broadcastHistory()
+    {
+        $broadcasts = BroadcastHistory::orderBy('created_at', 'desc')
+            ->paginate(20);
+
+        return view('notifications.broadcast-history', compact('broadcasts'));
+    }
+
+    /**
+     * Menampilkan detail broadcast
+     */
+    public function broadcastDetail($broadcastId)
+    {
+        $broadcast = BroadcastHistory::where('broadcast_id', $broadcastId)
+            ->firstOrFail();
+
+        return view('notifications.broadcast-detail', compact('broadcast'));
+    }
+
+    /**
+     * Resend broadcast yang gagal
+     */
+    public function resendFailedBroadcast($broadcastId, WhatsAppService $waService)
+    {
+        $broadcast = BroadcastHistory::where('broadcast_id', $broadcastId)
+            ->firstOrFail();
+
+        if (empty($broadcast->failed_recipients) || !is_array($broadcast->failed_recipients)) {
+            return redirect()->route('notifications.broadcast.detail', $broadcastId)
+                ->with('info', 'Tidak ada pesan yang gagal untuk dikirim ulang.');
         }
 
-        $parents = $parents->get();
-        $sent = 0;
-        $failed = 0;
+        $resent = 0;
+        $stillFailed = 0;
+        $updatedFailedRecipients = [];
+        $newSuccessRecipients = [];
 
-        foreach ($parents as $parent) {
-            $result = $waService->sendMessage($parent->phone, $request->message);
+        foreach ($broadcast->failed_recipients as $failedRecipient) {
+            // Kirim ulang pesan
+            $result = $waService->sendMessage($failedRecipient['phone'], $broadcast->message);
 
             if ($result['success']) {
-                $sent++;
+                $resent++;
+                // Pindahkan ke success recipients
+                $newSuccessRecipients[] = [
+                    'id' => $failedRecipient['id'],
+                    'name' => $failedRecipient['name'],
+                    'phone' => $failedRecipient['phone'],
+                    'student_name' => $failedRecipient['student_name'],
+                    'status' => 'sent',
+                    'sent_at' => now()->toDateTimeString(),
+                    'resend' => true,
+                    'message_id' => $result['message_id'] ?? null,
+                ];
             } else {
-                $failed++;
+                $stillFailed++;
+                // Tetap di failed recipients dengan informasi resend
+                $updatedFailedRecipients[] = array_merge($failedRecipient, [
+                    'last_resend_attempt' => now()->toDateTimeString(),
+                    'resend_error' => $result['message'] ?? 'Unknown error',
+                    'resend_count' => ($failedRecipient['resend_count'] ?? 0) + 1,
+                ]);
             }
         }
 
-        return redirect()->route('notifications.index')->with('success',
-            "Broadcast selesai: {$sent} berhasil, {$failed} gagal"
-        );
+        // Gabungkan recipients_detail yang sudah ada dengan yang baru berhasil
+        $existingRecipients = $broadcast->recipients_detail ?? [];
+        $allRecipients = array_merge($existingRecipients, $newSuccessRecipients);
+
+        // Update riwayat broadcast
+        $newSentCount = $broadcast->sent_count + $resent;
+        $newFailedCount = $stillFailed;
+
+        $broadcast->update([
+            'sent_count' => $newSentCount,
+            'failed_count' => $newFailedCount,
+            'recipients_detail' => $allRecipients,
+            'failed_recipients' => $updatedFailedRecipients,
+            'completed_at' => now(),
+            'notes' => $broadcast->notes . " | Resend: {$resent} sukses, {$stillFailed} gagal",
+        ]);
+
+        $message = "Berhasil mengirim ulang {$resent} pesan";
+        if ($stillFailed > 0) {
+            $message .= ", {$stillFailed} masih gagal.";
+        } else {
+            $message .= ". Semua pesan berhasil terkirim!";
+        }
+
+        return redirect()->route('notifications.broadcast.detail', $broadcastId)
+            ->with('success', $message);
+    }
+
+       public function deleteBroadcast($broadcastId)
+    {
+        try {
+            // Log untuk debugging
+            Log::info('Attempting to delete broadcast', ['broadcast_id' => $broadcastId]);
+
+            // Cari broadcast dengan broadcast_id
+            $broadcast = BroadcastHistory::where('broadcast_id', $broadcastId)->first();
+
+            if (!$broadcast) {
+                Log::warning('Broadcast not found', ['broadcast_id' => $broadcastId]);
+
+                if (request()->ajax()) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Broadcast tidak ditemukan.'
+                    ], 404);
+                }
+
+                return redirect()->route('notifications.broadcast.history')
+                    ->with('error', 'Broadcast tidak ditemukan.');
+            }
+
+            // Hapus broadcast
+            $broadcast->delete();
+
+            Log::info('Broadcast deleted successfully', ['broadcast_id' => $broadcastId]);
+
+            if (request()->ajax()) {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Riwayat broadcast berhasil dihapus.'
+                ]);
+            }
+
+            return redirect()->route('notifications.broadcast.history')
+                ->with('success', 'Riwayat broadcast berhasil dihapus.');
+
+        } catch (\Exception $e) {
+            Log::error('Error deleting broadcast', [
+                'broadcast_id' => $broadcastId,
+                'error' => $e->getMessage()
+            ]);
+
+            if (request()->ajax()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Gagal menghapus broadcast: ' . $e->getMessage()
+                ], 500);
+            }
+
+            return redirect()->route('notifications.broadcast.history')
+                ->with('error', 'Gagal menghapus broadcast: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Delete selected broadcasts
+     */
+    public function deleteSelectedBroadcasts(Request $request)
+    {
+        $request->validate([
+            'selected_broadcasts' => 'required|array',
+            'selected_broadcasts.*' => 'string'
+        ]);
+
+        try {
+            $deletedCount = 0;
+            $notFoundCount = 0;
+
+            foreach ($request->selected_broadcasts as $broadcastId) {
+                $broadcast = BroadcastHistory::where('broadcast_id', $broadcastId)->first();
+
+                if ($broadcast) {
+                    $broadcast->delete();
+                    $deletedCount++;
+                } else {
+                    $notFoundCount++;
+                }
+            }
+
+            $message = "Berhasil menghapus {$deletedCount} riwayat broadcast.";
+            if ($notFoundCount > 0) {
+                $message .= " {$notFoundCount} data tidak ditemukan.";
+            }
+
+            return redirect()->route('notifications.broadcast.history')
+                ->with('success', $message);
+
+        } catch (\Exception $e) {
+            return redirect()->route('notifications.broadcast.history')
+                ->with('error', 'Gagal menghapus broadcast: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Delete all broadcasts
+     */
+    public function deleteAllBroadcasts()
+    {
+        try {
+            $total = BroadcastHistory::count();
+
+            if ($total === 0) {
+                return redirect()->route('notifications.broadcast.history')
+                    ->with('info', 'Tidak ada data broadcast untuk dihapus.');
+            }
+
+            BroadcastHistory::truncate();
+
+            return redirect()->route('notifications.broadcast.history')
+                ->with('success', "Berhasil menghapus semua ({$total}) riwayat broadcast.");
+
+        } catch (\Exception $e) {
+            return redirect()->route('notifications.broadcast.history')
+                ->with('error', 'Gagal menghapus semua broadcast: ' . $e->getMessage());
+        }
     }
 }
+

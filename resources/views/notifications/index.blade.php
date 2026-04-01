@@ -10,6 +10,9 @@
             <a href="{{ route('notifications.broadcast') }}" class="btn btn-success btn-sm">
                 <i class="fas fa-broadcast-tower me-1"></i> Broadcast
             </a>
+             <a href="{{ route('notifications.broadcast.history') }}" class="btn btn-success btn-sm">
+                <i class="fas fa-sync-alt me-1"></i> riwayat Broadcast
+            </a>
             <form action="{{ route('notifications.resend-all') }}" method="POST" class="d-inline">
                 @csrf
                 <button type="submit" class="btn btn-warning btn-sm" onclick="return confirm('Kirim ulang semua notifikasi yang gagal?')">
