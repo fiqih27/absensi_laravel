@@ -88,7 +88,7 @@
                             <div class="mb-3">
                                 <label class="form-label">API URL</label>
                                 <input type="url" name="whatsapp_api_url" class="form-control" value="{{ $settings['whatsapp_api_url'] }}" required>
-                                <small class="text-muted">URL endpoint WhatsApp API (Wablas/Fonnte)</small>
+                                <small class="text-muted">URL endpoint WhatsApp API (Wablas/Fonnte/Meta Cloud)</small>
                             </div>
 
                             <div class="mb-3">
@@ -98,8 +98,19 @@
                             </div>
 
                             <div class="mb-3">
+                                <label class="form-label">
+                                    <i class="fas fa-bell me-1"></i> Nomor Penerima Notifikasi
+                                </label>
+                                <input type="text" name="whatsapp_broadcast_number" class="form-control" value="{{ $settings['whatsapp_broadcast_number'] ?? '' }}" placeholder="6281234567890">
+                                <small class="text-muted">
+                                    <strong>Nomor WhatsApp yang akan menerima semua notifikasi absensi.</strong><br>
+                                    Format: 628xxxxxxxxxx (tanpa tanda + atau spasi). Kosongkan jika ingin mengirim ke masing-masing nomor orang tua.
+                                </small>
+                            </div>
+
+                            <div class="mb-3">
                                 <div class="form-check">
-                                    <input type="checkbox" name="send_notification" class="form-check-input" id="send_notification" {{ $settings['send_notification'] ? 'checked' : '' }}>
+                                    <input type="checkbox" name="send_notification" class="form-check-input" id="send_notification" {{ ($settings['send_notification'] ?? false) ? 'checked' : '' }}>
                                     <label class="form-check-label" for="send_notification">
                                         Aktifkan Pengiriman Notifikasi WhatsApp
                                     </label>
@@ -118,6 +129,7 @@
                             @csrf
                             <div class="col-md-8">
                                 <input type="text" name="test_phone" class="form-control" placeholder="Nomor WhatsApp untuk test (contoh: 081234567890)">
+                                <small class="text-muted">Biarkan kosong untuk mengirim test ke nomor penerima notifikasi</small>
                             </div>
                             <div class="col-md-4">
                                 <button type="submit" class="btn btn-success w-100">
@@ -125,6 +137,20 @@
                                 </button>
                             </div>
                         </form>
+
+                        <!-- Informasi Nomor Penerima Notifikasi Saat Ini -->
+                        @if(!empty($settings['whatsapp_broadcast_number']))
+                        <div class="alert alert-info mt-3 mb-0">
+                            <i class="fas fa-info-circle me-2"></i>
+                            <strong>Mode Broadcast Aktif:</strong> Semua notifikasi absensi akan dikirim ke nomor
+                            <strong>{{ $settings['whatsapp_broadcast_number'] }}</strong>
+                        </div>
+                        @else
+                        <div class="alert alert-warning mt-3 mb-0">
+                            <i class="fas fa-exclamation-triangle me-2"></i>
+                            <strong>Mode Individual:</strong> Notifikasi akan dikirim ke nomor WhatsApp masing-masing orang tua siswa.
+                        </div>
+                        @endif
                     </div>
                 </div>
             </div>
@@ -232,7 +258,7 @@
                                 <hr>
                                 <table class="table table-sm">
                                     <tr>
-                                        <td width="200">versi</td>
+                                        <td width="200">Versi</td>
                                         <td>: Rnd V1</td>
                                     </tr>
                                     <tr>

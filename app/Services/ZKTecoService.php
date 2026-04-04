@@ -408,7 +408,7 @@ class ZKTecoService
     public function getDeviceInfo(): array
     {
         try {
-            $this->connect();
+            $this->connect(); 
             $this->disableDevice();
 
             $info = [

@@ -118,7 +118,7 @@ class NotificationController extends Controller
     }
 
 
-public function sendBroadcast(Request $request, WhatsAppService $waService)
+  public function sendBroadcast(Request $request, WhatsAppService $waService)
     {
         $request->validate([
             'message' => 'required|string',
@@ -128,11 +128,20 @@ public function sendBroadcast(Request $request, WhatsAppService $waService)
         DB::beginTransaction();
 
         try {
+            // Ambil nomor broadcast dari cache (sudah diatur di settings)
+            $broadcastNumber = cache('whatsapp_broadcast_number');
+
+            // Cek apakah nomor broadcast sudah diatur
+            if (empty($broadcastNumber)) {
+                return redirect()->route('notifications.broadcast.history')
+                    ->with('error', 'Nomor penerima broadcast belum diatur. Silakan atur di menu Pengaturan > WhatsApp.');
+            }
+
             // Generate unique broadcast ID
             $broadcastId = 'BROADCAST_' . Str::upper(Str::random(8)) . '_' . time();
 
-            // Ambil daftar parents
-            $parentsQuery = ParentModel::query();
+            // Ambil daftar orang tua (untuk informasi/data saja, tidak untuk dikirimi WA)
+            $parentsQuery = ParentModel::with('student');
 
             if ($request->recipients === 'active_only') {
                 $parentsQuery->whereHas('student', function($q) {
@@ -144,66 +153,90 @@ public function sendBroadcast(Request $request, WhatsAppService $waService)
 
             if ($parents->isEmpty()) {
                 return redirect()->route('notifications.broadcast.history')
-                    ->with('error', 'Tidak ada penerima yang ditemukan.');
+                    ->with('error', 'Tidak ada data orang tua yang ditemukan.');
             }
 
-            // Prepare data untuk broadcast
-            $recipientsDetail = [];
-            $failedRecipients = [];
+            // Buat ringkasan data orang tua untuk informasi
+            $totalStudents = $parents->count();
+            $activeStudents = $parents->filter(function($parent) {
+                return $parent->student && $parent->student->status === 'active';
+            })->count();
+
+            // Siapkan pesan yang akan dikirim (bisa ditambah informasi ringkasan)
+            $finalMessage = $request->message;
+
+            // Opsional: Tambahkan footer informasi jumlah siswa
+            if ($request->has('add_summary') && $request->add_summary) {
+                $finalMessage .= "\n\n---\n📊 Ringkasan Data:\nTotal Siswa: {$totalStudents}\nSiswa Aktif: {$activeStudents}";
+            }
+
+            // Kirim pesan ke nomor broadcast (1 nomor WA saja)
+            $result = $waService->sendMessage($broadcastNumber, $finalMessage);
+
+            // Siapkan data untuk riwayat
             $sent = 0;
             $failed = 0;
+            $recipientsDetail = [];
+            $failedRecipients = [];
 
-            // Kirim pesan ke setiap parent
-            foreach ($parents as $parent) {
-                // Kirim pesan WhatsApp
-                $result = $waService->sendMessage($parent->phone, $request->message);
-
-                $recipientData = [
-                    'id' => $parent->id,
-                    'name' => $parent->name,
-                    'phone' => $parent->phone,
-                    'student_name' => $parent->student->name ?? 'N/A',
-                    'status' => $result['success'] ? 'sent' : 'failed',
-                    'sent_at' => now()->toDateTimeString(),
+            if ($result['success']) {
+                $sent = 1;
+                $recipientsDetail = [
+                    [
+                        'id' => 'broadcast_number',
+                        'name' => 'WhatsApp Kesiswaan',
+                        'phone' => $broadcastNumber,
+                        'student_name' => 'Broadcast',
+                        'status' => 'sent',
+                        'sent_at' => now()->toDateTimeString(),
+                        'message_id' => $result['message_id'] ?? null,
+                    ]
                 ];
-
-                if (!$result['success']) {
-                    $recipientData['error'] = $result['message'] ?? 'Unknown error';
-                    $failedRecipients[] = $recipientData;
-                    $failed++;
-                } else {
-                    $recipientData['message_id'] = $result['message_id'] ?? null;
-                    $recipientsDetail[] = $recipientData;
-                    $sent++;
-                }
+            } else {
+                $failed = 1;
+                $failedRecipients = [
+                    [
+                        'id' => 'broadcast_number',
+                        'name' => 'WhatsApp Kesiswaan',
+                        'phone' => $broadcastNumber,
+                        'student_name' => 'Broadcast',
+                        'status' => 'failed',
+                        'error' => $result['error'] ?? 'Unknown error',
+                        'sent_at' => now()->toDateTimeString(),
+                    ]
+                ];
             }
 
-            // Simpan riwayat broadcast ke tabel broadcast_histories saja
+            // Simpan riwayat broadcast
             $broadcastHistory = BroadcastHistory::create([
                 'broadcast_id' => $broadcastId,
                 'message' => $request->message,
                 'recipient_type' => $request->recipients,
-                'total_recipients' => $parents->count(),
+                'total_recipients' => 1, // Hanya 1 nomor broadcast
                 'sent_count' => $sent,
                 'failed_count' => $failed,
                 'recipients_detail' => $recipientsDetail,
                 'failed_recipients' => $failedRecipients,
-                'status' => BroadcastHistory::STATUS_COMPLETED,
+                'status' => $sent > 0 ? BroadcastHistory::STATUS_COMPLETED : BroadcastHistory::STATUS_FAILED,
                 'started_at' => now(),
                 'completed_at' => now(),
-                'notes' => "Broadcast selesai: {$sent} berhasil, {$failed} gagal",
+                'notes' => "Dikirim ke nomor broadcast: {$broadcastNumber}. Data mencakup {$totalStudents} siswa ({$activeStudents} aktif).",
             ]);
 
             DB::commit();
 
-            $message = "Broadcast selesai: {$sent} berhasil, {$failed} gagal.";
-
-            return redirect()->route('notifications.broadcast.history')
-                ->with('success', $message)
-                ->with('broadcast_id', $broadcastId);
+            if ($sent > 0) {
+                return redirect()->route('notifications.broadcast.history')
+                    ->with('success', "Broadcast berhasil dikirim ke nomor WhatsApp Kesiswaan: {$broadcastNumber}")
+                    ->with('broadcast_id', $broadcastId);
+            } else {
+                return redirect()->route('notifications.broadcast.history')
+                    ->with('error', "Broadcast gagal dikirim: " . ($result['error'] ?? 'Unknown error'));
+            }
 
         } catch (\Exception $e) {
             DB::rollBack();
+            Log::error('Broadcast Error: ' . $e->getMessage());
 
             return redirect()->route('notifications.broadcast.history')
                 ->with('error', 'Gagal mengirim broadcast: ' . $e->getMessage());
@@ -233,52 +266,62 @@ public function sendBroadcast(Request $request, WhatsAppService $waService)
     }
 
     /**
-     * Resend broadcast yang gagal
+     * Resend broadcast yang gagal (kirim ulang ke nomor broadcast)
      */
     public function resendFailedBroadcast($broadcastId, WhatsAppService $waService)
     {
         $broadcast = BroadcastHistory::where('broadcast_id', $broadcastId)
             ->firstOrFail();
 
+        // Ambil nomor broadcast dari cache
+        $broadcastNumber = cache('whatsapp_broadcast_number');
+
+        if (empty($broadcastNumber)) {
+            return redirect()->route('notifications.broadcast.detail', $broadcastId)
+                ->with('error', 'Nomor broadcast belum diatur. Silakan atur di Pengaturan WhatsApp terlebih dahulu.');
+        }
+
+        // Cek apakah ada pesan yang gagal
         if (empty($broadcast->failed_recipients) || !is_array($broadcast->failed_recipients)) {
             return redirect()->route('notifications.broadcast.detail', $broadcastId)
                 ->with('info', 'Tidak ada pesan yang gagal untuk dikirim ulang.');
         }
+
+        // Kirim ulang pesan ke nomor broadcast
+        $result = $waService->sendMessage($broadcastNumber, $broadcast->message);
 
         $resent = 0;
         $stillFailed = 0;
         $updatedFailedRecipients = [];
         $newSuccessRecipients = [];
 
-        foreach ($broadcast->failed_recipients as $failedRecipient) {
-            // Kirim ulang pesan
-            $result = $waService->sendMessage($failedRecipient['phone'], $broadcast->message);
-
-            if ($result['success']) {
-                $resent++;
-                // Pindahkan ke success recipients
-                $newSuccessRecipients[] = [
-                    'id' => $failedRecipient['id'],
-                    'name' => $failedRecipient['name'],
-                    'phone' => $failedRecipient['phone'],
-                    'student_name' => $failedRecipient['student_name'],
-                    'status' => 'sent',
-                    'sent_at' => now()->toDateTimeString(),
-                    'resend' => true,
-                    'message_id' => $result['message_id'] ?? null,
-                ];
-            } else {
-                $stillFailed++;
-                // Tetap di failed recipients dengan informasi resend
+        if ($result['success']) {
+            $resent = 1;
+            $newSuccessRecipients[] = [
+                'id' => 'broadcast_number',
+                'name' => 'WhatsApp Kesiswaan',
+                'phone' => $broadcastNumber,
+                'student_name' => 'Broadcast',
+                'status' => 'sent',
+                'sent_at' => now()->toDateTimeString(),
+                'resend' => true,
+                'message_id' => $result['message_id'] ?? null,
+            ];
+            $stillFailed = 0;
+            $updatedFailedRecipients = [];
+        } else {
+            $resent = 0;
+            $stillFailed = 1;
+            foreach ($broadcast->failed_recipients as $failedRecipient) {
                 $updatedFailedRecipients[] = array_merge($failedRecipient, [
                     'last_resend_attempt' => now()->toDateTimeString(),
-                    'resend_error' => $result['message'] ?? 'Unknown error',
+                    'resend_error' => $result['error'] ?? 'Unknown error',
                     'resend_count' => ($failedRecipient['resend_count'] ?? 0) + 1,
                 ]);
             }
         }
 
-        // Gabungkan recipients_detail yang sudah ada dengan yang baru berhasil
+        // Update recipients_detail
         $existingRecipients = $broadcast->recipients_detail ?? [];
         $allRecipients = array_merge($existingRecipients, $newSuccessRecipients);
 
@@ -292,27 +335,27 @@ public function sendBroadcast(Request $request, WhatsAppService $waService)
             'recipients_detail' => $allRecipients,
             'failed_recipients' => $updatedFailedRecipients,
             'completed_at' => now(),
+            'status' => $newFailedCount == 0 ? BroadcastHistory::STATUS_COMPLETED : BroadcastHistory::STATUS_PARTIAL,
             'notes' => $broadcast->notes . " | Resend: {$resent} sukses, {$stillFailed} gagal",
         ]);
 
-        $message = "Berhasil mengirim ulang {$resent} pesan";
+        $message = "Berhasil mengirim ulang pesan ke nomor broadcast.";
         if ($stillFailed > 0) {
-            $message .= ", {$stillFailed} masih gagal.";
-        } else {
-            $message .= ". Semua pesan berhasil terkirim!";
+            $message = "Gagal mengirim ulang pesan. Error: " . ($result['error'] ?? 'Unknown error');
         }
 
         return redirect()->route('notifications.broadcast.detail', $broadcastId)
-            ->with('success', $message);
+            ->with($stillFailed > 0 ? 'error' : 'success', $message);
     }
 
-       public function deleteBroadcast($broadcastId)
+    /**
+     * Hapus riwayat broadcast
+     */
+    public function deleteBroadcast($broadcastId)
     {
         try {
-            // Log untuk debugging
             Log::info('Attempting to delete broadcast', ['broadcast_id' => $broadcastId]);
 
-            // Cari broadcast dengan broadcast_id
             $broadcast = BroadcastHistory::where('broadcast_id', $broadcastId)->first();
 
             if (!$broadcast) {
@@ -329,7 +372,6 @@ public function sendBroadcast(Request $request, WhatsAppService $waService)
                     ->with('error', 'Broadcast tidak ditemukan.');
             }
 
-            // Hapus broadcast
             $broadcast->delete();
 
             Log::info('Broadcast deleted successfully', ['broadcast_id' => $broadcastId]);
@@ -361,7 +403,6 @@ public function sendBroadcast(Request $request, WhatsAppService $waService)
                 ->with('error', 'Gagal menghapus broadcast: ' . $e->getMessage());
         }
     }
-
     /**
      * Delete selected broadcasts
      */

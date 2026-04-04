@@ -6,6 +6,8 @@
 php artisan serve                     
 php artisan attendance:realtime
 php artisan queue:work
+local\/
+ngrok http 8000 --domain=kimberlee-unshrugging-tasia.ngrok-free.dev
 Done😸
 
 ============================================

@@ -41,7 +41,7 @@ class BroadcastHistory extends Model
     const STATUS_PROCESSING = 'processing';
     const STATUS_COMPLETED = 'completed';
     const STATUS_FAILED = 'failed';
-
+ const STATUS_PARTIAL = 'partial';
     /**
      * Relasi ke tabel notifications (opsional)
      * Jika ingin menghubungkan dengan notifikasi individual

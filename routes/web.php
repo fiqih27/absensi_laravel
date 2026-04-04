@@ -1,5 +1,5 @@
 <?php
-
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\AttendanceController;
 use App\Http\Controllers\DeviceController;
@@ -10,6 +10,7 @@ use App\Http\Controllers\ReportController;
 use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\SettingController;
 use App\Http\Controllers\AuthController;
+use Illuminate\Support\Facades\Log;
 
 // Halaman utama - Dashboard
 Route::get('/', [DashboardController::class, 'index'])->name('dashboard');
@@ -70,3 +71,13 @@ Route::resource('parents', ParentController::class);
 Route::get('/login', [AuthController::class, 'showLogin'])->name('login');
 Route::post('/login', [AuthController::class, 'login']);
 Route::post('/logout', [AuthController::class, 'logout'])->name('logout');
+
+
+use App\Http\Controllers\WhatsAppChatController;
+
+Route::get('/whatsapp-chat', [WhatsAppChatController::class, 'index'])->name('whatsapp.chat');
+Route::get('/whatsapp-chat/messages/{conversationId}', [WhatsAppChatController::class, 'getMessages']);
+Route::post('/whatsapp-chat/send', [WhatsAppChatController::class, 'sendMessage']);
+Route::delete('/whatsapp-chat/delete/{id}', [WhatsAppChatController::class, 'deleteConversation']);
+Route::put('/whatsapp-chat/archive/{id}', [WhatsAppChatController::class, 'archiveConversation']);;
+Route::get('/whatsapp-chat/contacts', [WhatsAppChatController::class, 'getContacts']);

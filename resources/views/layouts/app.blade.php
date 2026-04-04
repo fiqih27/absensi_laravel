@@ -299,6 +299,11 @@
                             <i class="fas fa-tachometer-alt me-1"></i> Dashboard
                         </a>
                     </li>
+                    <li class="nav-item">
+    <a class="nav-link" href="{{ route('whatsapp.chat') }}">
+        <i class="fab fa-whatsapp"></i> WhatsApp Chat
+    </a>
+</li>
                     <li class="nav-item dropdown">
                         <a class="nav-link dropdown-toggle" href="#" id="attDrop" role="button" data-bs-toggle="dropdown">
                             <i class="fas fa-calendar-check me-1"></i> Absensi

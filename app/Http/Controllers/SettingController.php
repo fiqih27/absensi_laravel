@@ -18,6 +18,7 @@ class SettingController extends Controller
             'app_name' => env('APP_NAME', 'Absensi Alfaiz'),
             'whatsapp_api_url' => env('WHATSAPP_API_URL', ''),
             'whatsapp_api_token' => env('WHATSAPP_API_TOKEN', ''),
+            'whatsapp_broadcast_number' => Cache::get('whatsapp_broadcast_number', ''), // Tambahkan ini
             'sync_interval' => Cache::get('sync_interval', 5),
             'auto_sync' => Cache::get('auto_sync', true),
             'send_notification' => Cache::get('send_notification', true),
@@ -64,13 +65,25 @@ class SettingController extends Controller
             'whatsapp_api_url' => 'required|url',
             'whatsapp_api_token' => 'required|string',
             'send_notification' => 'boolean',
+            'whatsapp_broadcast_number' => 'nullable|string|regex:/^[0-9]{10,15}$/', // Validasi nomor HP
         ]);
 
         // Update .env file
         $this->updateEnv('WHATSAPP_API_URL', $request->whatsapp_api_url);
         $this->updateEnv('WHATSAPP_API_TOKEN', $request->whatsapp_api_token);
 
+        // Update cache untuk pengaturan WhatsApp
         Cache::put('send_notification', $request->has('send_notification'), 86400);
+
+        // Simpan nomor broadcast ke cache
+        $broadcastNumber = $request->whatsapp_broadcast_number;
+        if (!empty($broadcastNumber)) {
+            // Format nomor broadcast
+            $broadcastNumber = $this->formatPhoneNumber($broadcastNumber);
+            Cache::put('whatsapp_broadcast_number', $broadcastNumber, 86400);
+        } else {
+            Cache::forget('whatsapp_broadcast_number');
+        }
 
         return redirect()->back()->with('success', 'Pengaturan WhatsApp berhasil disimpan');
     }
@@ -97,17 +110,28 @@ class SettingController extends Controller
     public function testWhatsApp(Request $request)
     {
         $request->validate([
-            'test_phone' => 'required|string',
+            'test_phone' => 'nullable|string', // Ubah menjadi nullable
         ]);
 
         $waService = new \App\Services\WhatsAppService();
+
+        // Jika test_phone kosong, gunakan nomor broadcast
+        $testPhone = $request->test_phone;
+        if (empty($testPhone)) {
+            $broadcastNumber = Cache::get('whatsapp_broadcast_number');
+            if (empty($broadcastNumber)) {
+                return redirect()->back()->with('error', 'Mohon isi nomor WhatsApp tujuan test atau set nomor broadcast terlebih dahulu');
+            }
+            $testPhone = $broadcastNumber;
+        }
+
         $result = $waService->sendMessage(
-            $request->test_phone,
+            $testPhone,
             "Bismillah fiqih disini Test koneksi WhatsApp dari Sistem Absensi Alfaiz\nWaktu: " . now()->format('d/m/Y H:i:s')
         );
 
         if ($result['success']) {
-            return redirect()->back()->with('success', 'Test WhatsApp berhasil dikirim ke ' . $request->test_phone);
+            return redirect()->back()->with('success', 'Test WhatsApp berhasil dikirim ke ' . $testPhone);
         }
 
         return redirect()->back()->with('error', 'Test WhatsApp gagal: ' . ($result['error'] ?? 'Unknown error'));
@@ -184,11 +208,40 @@ class SettingController extends Controller
         $path = base_path('.env');
 
         if (file_exists($path)) {
-            file_put_contents($path, str_replace(
-                $key . '=' . env($key),
-                $key . '=' . $value,
-                file_get_contents($path)
-            ));
+            // Escape value jika mengandung spasi atau karakter khusus
+            if (strpos($value, ' ') !== false || strpos($value, '#') !== false) {
+                $value = '"' . $value . '"';
+            }
+
+            // Cek apakah key sudah ada di .env
+            $content = file_get_contents($path);
+            if (preg_match("/^{$key}=.*/m", $content)) {
+                // Update existing key
+                file_put_contents($path, preg_replace(
+                    "/^{$key}=.*/m",
+                    "{$key}={$value}",
+                    $content
+                ));
+            } else {
+                // Add new key
+                file_put_contents($path, "\n{$key}={$value}", FILE_APPEND);
+            }
         }
+    }
+
+    /**
+     * Format nomor telepon
+     */
+    private function formatPhoneNumber($phone)
+    {
+        // Hapus semua karakter non-digit
+        $phone = preg_replace('/[^0-9]/', '', $phone);
+
+        // Jika diawali 0, ganti dengan 62
+        if (substr($phone, 0, 1) === '0') {
+            $phone = '62' . substr($phone, 1);
+        }
+
+        return $phone;
     }
 }
